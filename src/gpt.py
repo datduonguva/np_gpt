@@ -3,10 +3,11 @@ Implementation of DNN using numpy only with autograd
 """
 import numpy as np
 
-class Layer():
+class Matrix():
     """ must always have attr .data, .grad, .forward(), .backward(), children"""
     def __init__(
-        self, data=None, children=None, local_grads=None):
+        self, data=None, children=None, local_grads=None
+    ):
         self.data = data
         self.grad = None
         self.children = children
@@ -19,34 +20,38 @@ class Layer():
         raise ValueError("Not implemented")
 
     def __add__(self, other):
-        if not isinstance(other, Layer):
-            other = Layer(np.zeros(self.data.shape) + other)
-        return Layer(self.data + other.data, (self, other), (1, 1))
+        if not isinstance(other, Matrix):
+            other = Matrix(np.zeros(self.data.shape) + other)
+        return Matrix(self.data + other.data, (self, other), (1, 1))
 
     def __mul__(self, other):
-        if not isinstance(other, Layer):
-            other = Layer(np.zeros(self.shape) + other)
-        return Layer( self.data* other.data, (self, other), (other.data, self.data ))
+        if not isinstance(other, Matrix):
+            other = Matrix(np.zeros(self.data.shape) + other)
+        return Matrix( self.data* other.data, (self, other), (other.data, self.data ))
+    def __neg__(self): return self * (-1)
 
+    def __pow__(self, other): return Matrix(self.data ** other, (self, ), (other * self.data ** (other - 1),))
+    def __radd__(self, other): return self + other
+    def __rsub__(self, other): return self + (-other)
+    def __rmul__(self, other): return self * other
+    def __truediv__(self, other): return self * other ** (-1)
+    def __rtruediv__(self, other): return other * self ** (-1)
 
-class Linear(Layer):
-    def __init__(self, d_in, d_out, children=None, required_grad=False):
-        super().__init__(required_grad=required_grad, children=children)
-        self.w = np.random.normal(0, 1, (d_in, d_out))
+class Linear():
+    def __init__(self, d_in, d_out):
+        self.w = Matrix(np.random.normal(0, 1, (d_in, d_out)))
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
-        assert x.shape[-1] == self.w.shape[0]
-        self.data = x
-        return x.dot(self.w)
+    def __call__(self, other: Matrix) -> Matrix:
+        return Matrix(
+            other.data.dot(self.w.data),
+            (self.w,  other), (other.data, self.w.data)
+        )
 
-    def backward(self, d_upstream): # d_upstream = (b, d_out)
-        if self.required_grad:
-            assert d_upstream.shape[-1] == self.w.shape[-1]
-            self.grad = self.data.T.dot(d_upstream)
-            return d_upstream.dot(self.w) # (b, d_out) x (d_out, d_in)
-        return d_upstream
 
 if __name__ == '__main__':
-    m_a = Layer(data=np.random.rand(3, 5)) + 1
-
     breakpoint()
+    m_a = Matrix(data=np.random.rand(3, 5)) + 1
+
+    linear = Linear(5, 10)
+
+    m_b = linear(m_a)
