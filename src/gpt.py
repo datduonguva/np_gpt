@@ -45,16 +45,12 @@ class Matrix():
         for v in reversed(topo):
             if v.ops == 'matmul':
                 # (d_in, d_out)  == (batch, d_in), (batch_dout) 
-                print("v.children[0].grad.shape: ", v.children[0].grad.shape) 
-                print("v.local_grads[0]: ", v.local_grads[0].shape)
-                print("v.children[1].grad", v.children[1].grad.shape)
-                print("v.grad", v.grad.shape)
-                v.children[0].grad += v.local_grads[0].T.dot(v.grad)
-                print(v.local_grads[0].T)
-                print("--------")
-                print("v.grad")
+                v.children[0].grad += v.local_grads[0].T.dot(v.grad) / v.data.shape[0]
                 print(v.grad)
-                v.children[1].grad += v.grad.dot(v.local_grads[1].T)
+                print("chil 0 grad: ", v.children[0].grad)
+
+                v.children[1].grad += v.grad.dot(v.local_grads[1].T) / v.data.shape[0]
+                print("chil 1 grad: ", v.children[1].grad)
             else:
                 for child, local_grad in zip(v.children, v.local_grads):
                     child.grad += v.grad * local_grad
@@ -90,15 +86,16 @@ class Linear():
 
 
 if __name__ == '__main__':
-    breakpoint()
     x = Matrix(data=np.zeros((3, 5))) + 1
 
     linear = Linear(5, 10)
+    print("Liiear: \n", linear.w.data)
 
     y = linear(x)
     y.backward()
 
     print(y.children[0].grad.shape)
+    print(y.children[1].grad.shape)
 
     # this does not work, we must calculate the grad at each layer,
     # then go to the top
