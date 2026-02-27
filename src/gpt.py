@@ -1,5 +1,6 @@
 """
 Implementation of DNN using numpy only with autograd
+TODO: write more test to make sure the gradients are correct
 """
 import numpy as np
 
@@ -45,11 +46,11 @@ class Matrix():
         for v in reversed(topo):
             if v.ops == 'matmul':
                 # (d_in, d_out)  == (batch, d_in), (batch_dout) 
-                v.children[0].grad += v.local_grads[0].T.dot(v.grad) / v.data.shape[0]
+                v.children[0].grad += v.local_grads[0].T.dot(v.grad)
                 print(v.grad)
                 print("chil 0 grad: ", v.children[0].grad)
 
-                v.children[1].grad += v.grad.dot(v.local_grads[1].T) / v.data.shape[0]
+                v.children[1].grad += v.grad.dot(v.local_grads[1].T)
                 print("chil 1 grad: ", v.children[1].grad)
             else:
                 for child, local_grad in zip(v.children, v.local_grads):
@@ -59,6 +60,7 @@ class Matrix():
             other = Matrix(np.zeros(self.data.shape) + other)
         return Matrix(self.data + other.data, (self, other), (1, 1))
 
+    def __sub__(self, other): return self + (-other)
     def __mul__(self, other):
         if not isinstance(other, Matrix):
             other = Matrix(np.zeros(self.data.shape) + other)
@@ -86,16 +88,46 @@ class Linear():
 
 
 if __name__ == '__main__':
-    x = Matrix(data=np.zeros((3, 5))) + 1
+    # this is just a test
+    """
+    y = x @ m
+
+    x[0]: m -> m.grad = dy / dm (d_in, d_out) = (d_in, batch) (batch, d_out) = x.T.dot(v.grad)
+
+               dy: (b, d_out) = x dm  (d_in, d_out)
+    """
+    x = Matrix(data=np.random.normal(0, 1, (3, 5)))
 
     linear = Linear(5, 10)
-    print("Liiear: \n", linear.w.data)
 
-    y = linear(x)
-    y.backward()
+    y1 = linear(x) / 3
+    y2 = y1 * y1
 
-    print(y.children[0].grad.shape)
-    print(y.children[1].grad.shape)
+    y2.backward()
+    grad_method_1 = x.grad.copy()
+    print("grad_method_1: ", grad_method_1.shape, grad_method_1)
 
+    # method 2:
+    EPS = 1e-5
+    grad_method_2 = np.zeros((3, 5))
+    for i in range(3):
+        for j in range(5):
+
+            x_0 = Matrix(data=x.data.copy() )
+            x_0.data[i][j] -= EPS
+            x_1 = Matrix(data=x.data.copy()) 
+            x_1.data[i][j] += EPS
+
+            ta_1 = linear(x_0) /3 
+            ta_2 = ta_1 * ta_1
+            
+            tb_1 = linear(x_1) /3 
+            tb_2 = tb_1 * tb_1
+ 
+            grad_method_2[i][j] = (tb_2 - ta_2).data.sum() / (2*EPS)
+
+    print("grad_method_2: ", grad_method_2)
+    
+    assert np.abs(grad_method_1 - grad_method_2).max() < 1e-5
     # this does not work, we must calculate the grad at each layer,
     # then go to the top
