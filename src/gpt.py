@@ -15,43 +15,6 @@ class Matrix():
         self.local_grads = () if local_grads is None else local_grads
         self.ops = ops # store the name of the operation, used for backprob
 
-    def __call__(self, x):
-        raise ValueError("Not implemented")
-
-    def backward(self):
-        """
-        This is the loss function
-        after calculing the output, it should have the .data
-        Now, we are calculating the grad of the data with respect to its 
-        child
-
-        for example:
-        L = (y_true - y_pred) **2,  = 
-
-        L.backward()
-
-        find the grad from all childs
-        """
-        topo = []
-        visited = set([])
-        def _build_topo(v):
-            if v not in visited:
-                visited.add(v)
-                for child in v.children:
-                    _build_topo(child)
-                topo.append(v)
-        _build_topo(self) # [input-layers ->outputs]
-
-        self.grad = np.ones(self.data.shape)
-        for v in reversed(topo):
-            if v.ops == 'matmul':
-                # (d_in, d_out)  == (batch, d_in), (batch_dout) 
-                v.children[0].grad += v.local_grads[0].T.dot(v.grad)
-
-                v.children[1].grad += v.grad.dot(v.local_grads[1].T)
-            else:
-                for child, local_grad in zip(v.children, v.local_grads):
-                    child.grad += v.grad * local_grad
     def __add__(self, other):
         if not isinstance(other, Matrix):
             other = Matrix(np.zeros(self.data.shape) + other)
@@ -71,11 +34,36 @@ class Matrix():
     def __truediv__(self, other): return self * other ** (-1)
     def __rtruediv__(self, other): return other * self ** (-1)
 
+    def backward(self):
+        """
+        Create a computational tree by walking to child nodes recursively,
+        then compute the grad
+        """
+        topo = []
+        visited = set([])
+        def _build_topo(v):
+            if v not in visited:
+                visited.add(v)
+                for child in v.children:
+                    _build_topo(child)
+                topo.append(v)
+        _build_topo(self)
+
+        self.grad = np.ones(self.data.shape)
+        for v in reversed(topo):
+            if v.ops == 'matmul':
+                v.children[0].grad += v.local_grads[0].T.dot(v.grad)
+
+                v.children[1].grad += v.grad.dot(v.local_grads[1].T)
+            else:
+                for child, local_grad in zip(v.children, v.local_grads):
+                    child.grad += v.grad * local_grad
+
 
 class Linear():
+    """ Simiar to tensorflow's Dense """
     def __init__(self, d_in, d_out):
         self.w = Matrix(np.random.normal(0, 1, (d_in, d_out)))
-                       # (b, din)
     def __call__(self, other: Matrix) -> Matrix:
         return Matrix(
             other.data.dot(self.w.data),
@@ -84,47 +72,40 @@ class Linear():
         )
 
 
+class CategoricalEntropy():
+    def __init__(self):
+        pass
+
+    def __call__(self, y_true, y_pred):
+        softmax_output = self.softmax(y_pred) 
+        return Matrix(
+            -y_true.data * np.log(softmax_output), (y_pred, ), (softmax_output - y_true.data, )
+        )
+    def softmax(self, y_pred: Matrix):
+        max_val = np.max(y_pred.data, axis=-1, keepdims=True)
+        data = y_pred.data- max_val
+        data = np.exp(data)
+        data = data / np.sum(data, axis=-1, keepdims=True)
+        return data
+   
 if __name__ == '__main__':
     # this is just a test
-    """
-    y = x @ m
+    class MyModel():
+        def __init__(self):
+            self.linear = Linear(5, 10)
 
-    x[0]: m -> m.grad = dy / dm (d_in, d_out) = (d_in, batch) (batch, d_out) = x.T.dot(v.grad)
+        def __call__(self, input_: Matrix):
+            output = self.linear(input_)
 
-               dy: (b, d_out) = x dm  (d_in, d_out)
-    """
+            return output
+
+    my_model = MyModel()
+    loss_function = CategoricalEntropy()
     x = Matrix(data=np.random.normal(0, 1, (3, 5)))
+    output = my_model(x) 
 
-    linear = Linear(5, 10)
+    y_true = Matrix(data=np.random.randint(0, 1, (3, 10)))
 
-    y1 = linear(x) / 3
-    y2 = y1 * y1
+    loss = loss_function(y_true, output)
+    loss.backward()
 
-    y2.backward()
-    grad_method_1 = x.grad.copy()
-    print("grad_method_1: ", grad_method_1.shape, grad_method_1)
-
-    # method 2:
-    EPS = 1e-5
-    grad_method_2 = np.zeros((3, 5))
-    for i in range(3):
-        for j in range(5):
-
-            x_0 = Matrix(data=x.data.copy() )
-            x_0.data[i][j] -= EPS
-            x_1 = Matrix(data=x.data.copy()) 
-            x_1.data[i][j] += EPS
-
-            ta_1 = linear(x_0) /3 
-            ta_2 = ta_1 * ta_1
-            
-            tb_1 = linear(x_1) /3 
-            tb_2 = tb_1 * tb_1
- 
-            grad_method_2[i][j] = (tb_2 - ta_2).data.sum() / (2*EPS)
-
-    print("grad_method_2: ", grad_method_2)
-    
-    assert np.abs(grad_method_1 - grad_method_2).max() < 1e-5
-    # this does not work, we must calculate the grad at each layer,
-    # then go to the top
