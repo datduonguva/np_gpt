@@ -3,6 +3,7 @@ Implementation of DNN using numpy only with autograd
 TODO: write more test to make sure the gradients are correct
 """
 import numpy as np
+import matplotlib.pyplot as plt
 
 class Matrix():
     """ must always have attr .data, .grad, .forward(), .backward(), children"""
@@ -33,6 +34,11 @@ class Matrix():
     def __rmul__(self, other): return self * other
     def __truediv__(self, other): return self * other ** (-1)
     def __rtruediv__(self, other): return other * self ** (-1)
+
+    def relu(self):
+        return Matrix(
+            self.data * (self.data > 0), (self, ), ((self.data > 0) * 1.0, )
+        )
 
     def backward(self):
         """
@@ -78,8 +84,9 @@ class CategoricalEntropy():
 
     def __call__(self, y_true, y_pred):
         softmax_output = self.softmax(y_pred) 
+        batch_size = softmax_output.shape[0] 
         return Matrix(
-            -y_true.data * np.log(softmax_output), (y_pred, ), (softmax_output - y_true.data, )
+            - np.mean((y_true.data) * np.log(softmax_output + 1e-9)), (y_pred, ), ((softmax_output - y_true.data)/batch_size, )
         )
     def softmax(self, y_pred: Matrix):
         max_val = np.max(y_pred.data, axis=-1, keepdims=True)
@@ -90,22 +97,4 @@ class CategoricalEntropy():
    
 if __name__ == '__main__':
     # this is just a test
-    class MyModel():
-        def __init__(self):
-            self.linear = Linear(5, 10)
-
-        def __call__(self, input_: Matrix):
-            output = self.linear(input_)
-
-            return output
-
-    my_model = MyModel()
-    loss_function = CategoricalEntropy()
-    x = Matrix(data=np.random.normal(0, 1, (3, 5)))
-    output = my_model(x) 
-
-    y_true = Matrix(data=np.random.randint(0, 1, (3, 10)))
-
-    loss = loss_function(y_true, output)
-    loss.backward()
-
+    pass

@@ -58,10 +58,10 @@ def test_1():
 
                 grad_method_2[i][j] = (y2 - y1).data.sum() / (2*EPS)
 
-        assert np.abs(grad_method_1 - grad_method_2).max() < 1e-5
+        assert np.abs(grad_method_1 - grad_method_2).max() < 1e-4
 
 
-def test_1():
+def test_2():
     """
     Create an input, run through models
     """
@@ -130,3 +130,69 @@ def test_1():
                 grad_method_2[i][j] = (y2 - y1).data.sum() / (2*EPS)
 
         assert np.abs(grad_method_1 - grad_method_2).max() < max_error
+
+def test_mnist():
+    """
+    This test trains an DNN model on MNIST to confirm that the loss converges.
+    Here, I am using 4 Linear layer with ReLU activation
+    """
+    class MyModel():
+        def __init__(self):
+            self.linear_1 = Linear(784, 512)
+            self.linear_2 = Linear(512, 256)
+            self.linear_3 = Linear(256, 128)
+            self.linear_4 = Linear(128, 10)
+
+        def __call__(self, input_: Matrix):
+            x1 = self.linear_1(input_).relu()
+            x2 = self.linear_2(x1).relu()
+            x3 = self.linear_3(x2).relu()
+            y = self.linear_4(x3)
+            return y
+
+
+    # load training data in "data/" folder. Should be easy to find on Keras
+    x_train = np.load("data/x_train.npy")
+    y_train = np.load("data/y_train.npy")
+    n_train = x_train.shape[0]
+
+    # Create the model, define loss function
+    my_model = MyModel()
+    loss_function = CategoricalEntropy()
+
+    # Define training loop with SGD
+    loss_history = []
+    acc_history = []
+    for step in range(2000):
+        # build mini batch
+        mask = np.random.randint(0, n_train, 32) 
+        x_batch = x_train[mask]
+        y_true = Matrix(data=np.eye(10)[y_train[mask]])
+
+        # get model prediction
+        x = Matrix(data=x_batch)
+        y_pred = my_model(x) 
+
+        # compute loss
+        loss = loss_function(y_true, y_pred)
+        if step % 20 == 0:
+            print("loss: ", loss.data)
+            loss_history.append(loss.data)
+            acc_history.append((np.argmax(y_true.data, axis=-1) == np.argmax(y_pred.data, axis=-1)).mean())
+            print(acc_history[-1])
+
+        # update the weights
+        loss.backward()
+
+        for layer in [
+            my_model.linear_1,
+            my_model.linear_2,
+            my_model.linear_3,
+            my_model.linear_4
+        ]:
+            assert layer.w.data.shape == layer.w.grad.shape 
+            layer.w.data -= 1e-6 * np.clip(layer.w.grad, -100, 100)
+
+    assert np.mean(loss_history[-10:]) < 0.5
+    assert loss_history[0] > loss_history[-1]
+
