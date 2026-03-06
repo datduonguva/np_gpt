@@ -78,6 +78,32 @@ class Linear():
         )
 
 
+class Relu():
+    """ Relu activate"""
+    def __call__(self, x: Matrix):
+        return Matrix(
+            x.data * (x.data > 0), (x, ), ((x.data > 0) * 1.0, )
+        )
+
+
+class Dropout: 
+    """ Dropout layer """
+    def __init__(self, ratio=0.5):
+        self.ratio = ratio
+
+    def __call__(self, x: Matrix, training=False):
+        if training:
+            # mask of dropped out element
+            mask = (np.random.rand(x.shape) < self.ratio)*1.0
+            data = x.data.copy()
+            data[mask] = 0
+            return Matrix(
+                data, (x, ), (1.0 - mask, )
+            )
+        else:
+            return x
+
+
 class CategoricalEntropy():
     def __init__(self):
         pass
@@ -86,7 +112,9 @@ class CategoricalEntropy():
         softmax_output = self.softmax(y_pred) 
         batch_size = softmax_output.shape[0] 
         return Matrix(
-            - np.mean((y_true.data) * np.log(softmax_output + 1e-9)), (y_pred, ), ((softmax_output - y_true.data)/batch_size, )
+            - np.mean((y_true.data) * np.log(softmax_output + 1e-9)), 
+            (y_pred, ), 
+            ((softmax_output - y_true.data)/batch_size, )
         )
     def softmax(self, y_pred: Matrix):
         max_val = np.max(y_pred.data, axis=-1, keepdims=True)

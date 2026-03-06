@@ -142,11 +142,12 @@ def test_mnist():
             self.linear_2 = Linear(512, 256)
             self.linear_3 = Linear(256, 128)
             self.linear_4 = Linear(128, 10)
-
+            self.relu = Relu()
+            
         def __call__(self, input_: Matrix):
-            x1 = self.linear_1(input_).relu()
-            x2 = self.linear_2(x1).relu()
-            x3 = self.linear_3(x2).relu()
+            x1 = self.relu(self.linear_1(input_))
+            x2 = self.relu(self.linear_2(x1))
+            x3 = self.relu(self.linear_3(x2))
             y = self.linear_4(x3)
             return y
 
