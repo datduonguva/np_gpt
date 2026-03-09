@@ -59,8 +59,12 @@ class Matrix():
         for v in reversed(topo):
             if v.ops == 'matmul':
                 v.children[0].grad += v.local_grads[0].T.dot(v.grad)
-
                 v.children[1].grad += v.grad.dot(v.local_grads[1].T)
+            elif v.ops == 'rmsnorm':
+                # (B, D)                        (B, D)  @ (B, D, D) 
+                v.children[0].grad += np.matmul(
+                    v.grad[:, np.newaxis,:], v.local_grads[0]
+                )[:, 0, :]
             else:
                 for child, local_grad in zip(v.children, v.local_grads):
                     child.grad += v.grad * local_grad
@@ -108,7 +112,7 @@ class CategoricalEntropy():
     def __init__(self):
         pass
 
-    def __call__(self, y_true, y_pred):
+    def __call__(self, y_true, y_pred, training=True):
         softmax_output = self.softmax(y_pred) 
         batch_size = softmax_output.shape[0] 
         return Matrix(
@@ -123,6 +127,31 @@ class CategoricalEntropy():
         data = data / np.sum(data, axis=-1, keepdims=True)
         return data
    
+
+class RMSNorm():
+    def __call__(self, x: Matrix, training=True):
+    
+        batch, dim = x.data.shape
+        epsilon = 1e-7
+        norm = np.sqrt(np.mean(x.data **2, axis=-1, keepdims=True) + epsilon)# (B, 1) 
+        y_data = x.data/norm
+        if training:
+            # local grad calculation 
+            norm = norm[:, :, np.newaxis]
+
+            local_grad =  (
+                np.eye(dim)[np.newaxis, :, :]/ norm -
+                np.matmul(
+                    x.data[:, :, np.newaxis],
+                    x.data[:, np.newaxis, :]
+                )/ dim / norm ** 3
+            ) 
+            return Matrix(
+                y_data, (x, ), (local_grad, ), ops='rmsnorm'
+            )
+        else:
+            return Matrix(y_data, (x, ))
+
 if __name__ == '__main__':
     # this is just a test
     pass

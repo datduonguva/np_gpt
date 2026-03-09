@@ -4,6 +4,7 @@ TODO: write more test to make sure the gradients are correct
 """
 import numpy as np
 from src.gpt import *
+import matplotlib.pyplot as plt
 
 def test_1():
     """
@@ -131,6 +132,68 @@ def test_2():
 
         assert np.abs(grad_method_1 - grad_method_2).max() < max_error
 
+def test_3():
+    """
+    Create an input, run through models with RMSNorm
+    """
+    class MyModel:
+
+        def __init__(self):
+
+            self.linear1 = Linear(5, 10)
+            self.linear2 = Linear(10, 12)
+            self.linear3 = Linear(12, 4)
+            self.norm = RMSNorm()
+
+        def __call__(self, input_):
+
+            y1 = self.linear1(input_)
+            y1 = self.norm(y1)
+            y2 = self.linear2(y1)
+            y2 = self.norm(y2)
+            y3 = self.linear3(y2)
+            return y3
+
+    input_ = Matrix(data=np.random.normal(0, 1, (3, 5)))
+
+    my_model = MyModel()
+    output_ = my_model(input_)
+
+
+    output_.backward()
+
+    EPS = 1e-6
+    # shallower layers might produce more error compared to deeper layers
+    for layer, max_error in [
+        (my_model.linear1, 1e-3),
+        (my_model.linear2, 1e-3),
+        (my_model.linear3, 1e-4)
+    ]:
+        grad_method_1 = layer.w.grad
+
+        # method 2:
+        grad_method_2 = np.zeros(layer.w.data.shape)
+
+        original_w = layer.w.data.copy()
+        for i in range(grad_method_2.shape[0]):
+            for j in range(grad_method_2.shape[1]):
+
+                layer.w.data = original_w.copy()
+                layer.w.data[i][j] -= EPS
+
+                y1 = my_model(input_)
+
+                
+                layer.w.data = original_w.copy()
+                layer.w.data[i][j] += EPS
+
+                y2 = my_model(input_)
+
+                grad_method_2[i][j] = (y2 - y1).data.sum() / (2*EPS)
+
+        assert np.abs(grad_method_1 - grad_method_2).max() < max_error
+
+
 def test_mnist():
     """
     This test trains an DNN model on MNIST to confirm that the loss converges.
@@ -139,6 +202,7 @@ def test_mnist():
     class MyModel():
         def __init__(self):
             self.linear_1 = Linear(784, 512)
+            self.norm = RMSNorm()
             self.linear_2 = Linear(512, 256)
             self.linear_3 = Linear(256, 128)
             self.linear_4 = Linear(128, 10)
@@ -148,6 +212,7 @@ def test_mnist():
             x1 = self.relu(self.linear_1(input_))
             x2 = self.relu(self.linear_2(x1))
             x3 = self.relu(self.linear_3(x2))
+            
             y = self.linear_4(x3)
             return y
 
@@ -164,7 +229,7 @@ def test_mnist():
     # Define training loop with SGD
     loss_history = []
     acc_history = []
-    for step in range(2000):
+    for step in range(4000):
         # build mini batch
         mask = np.random.randint(0, n_train, 32) 
         x_batch = x_train[mask]
@@ -176,11 +241,10 @@ def test_mnist():
 
         # compute loss
         loss = loss_function(y_true, y_pred)
-        if step % 20 == 0:
-            print("loss: ", loss.data)
+        if step % 1 == 0:
             loss_history.append(loss.data)
             acc_history.append((np.argmax(y_true.data, axis=-1) == np.argmax(y_pred.data, axis=-1)).mean())
-            print(acc_history[-1])
+            print("acc: ", acc_history[-1], "loss: ", loss_history[-1])
 
         # update the weights
         loss.backward()
@@ -192,8 +256,17 @@ def test_mnist():
             my_model.linear_4
         ]:
             assert layer.w.data.shape == layer.w.grad.shape 
-            layer.w.data -= 1e-6 * np.clip(layer.w.grad, -100, 100)
+            layer.w.data -= 1e-5 * np.clip(layer.w.grad, -100, 100)
+            layer.w.grad *= 0
+
+
+    loss_history = [np.mean(loss_history[i:i + 10]) for i in range(len(loss_history) - 1)]
+    acc_history = [np.mean(acc_history[i:i + 10]) for i in range(len(loss_history) - 1)]
+
+    plt.plot(loss_history, label='loss')
+    plt.plot(acc_history, label='acc')
+    plt.legend()
+    plt.show()
 
     assert np.mean(loss_history[-10:]) < 0.5
     assert loss_history[0] > loss_history[-1]
-
