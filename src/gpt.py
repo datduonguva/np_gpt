@@ -34,6 +34,11 @@ class Matrix():
     def __rmul__(self, other): return self * other
     def __truediv__(self, other): return self * other ** (-1)
     def __rtruediv__(self, other): return other * self ** (-1)
+    def repeat(self, n, dim): 
+        result = np.repeat(self.data, n, dim)
+        return Matrix(
+            result, (self, ), ops='repeat'
+        )
 
     def relu(self):
         return Matrix(
@@ -61,19 +66,31 @@ class Matrix():
                 v.children[0].grad += v.local_grads[0].T.dot(v.grad)
                 v.children[1].grad += v.grad.dot(v.local_grads[1].T)
             elif v.ops == 'rmsnorm':
-                # (B, D)                        (B, D)  @ (B, D, D) 
-                v.children[0].grad += np.matmul(
-                    v.grad[:, np.newaxis,:], v.local_grads[0]
-                )[:, 0, :]
+                # dL/dX = sum dL/dY dY/dX = dL/dY 1/norm (delta_id - X_i * X_j/norm **2/Dim)
+                y_data, norm = v.local_grads
+                v.children[0].grad += 1/norm * (
+                    v.grad - y_data * np.mean(y_data * v.grad, axis=-1, keepdims=True) 
+                ) 
+            elif v.ops == 'repeat':
+                v.children[0].grad += np.sum(v.grad, axis=-1, keepdims=True)
             else:
                 for child, local_grad in zip(v.children, v.local_grads):
                     child.grad += v.grad * local_grad
-
-
+class Sum:
+    def __call__(self, x: Matrix):
+        """
+        Sum on the last dimension, keep dims
+        """
+        return Matrix(
+            data=np.sum(x.data, axis=-1, keepdims=True,),
+            children=(x, ),
+            local_grads=(np.ones(x.data.shape),),
+            ops='sum'
+        )
 class Linear():
     """ Simiar to tensorflow's Dense """
     def __init__(self, d_in, d_out):
-        self.w = Matrix(np.random.normal(0, 1, (d_in, d_out)))
+        self.w = Matrix(np.random.normal(0, np.sqrt(2.0 / d_in), (d_in, d_out)))
     def __call__(self, other: Matrix) -> Matrix:
         return Matrix(
             other.data.dot(self.w.data),
@@ -136,22 +153,23 @@ class RMSNorm():
         norm = np.sqrt(np.mean(x.data **2, axis=-1, keepdims=True) + epsilon)# (B, 1) 
         y_data = x.data/norm
         if training:
-            # local grad calculation 
-            norm = norm[:, :, np.newaxis]
-
-            local_grad =  (
-                np.eye(dim)[np.newaxis, :, :]/ norm -
-                np.matmul(
-                    x.data[:, :, np.newaxis],
-                    x.data[:, np.newaxis, :]
-                )/ dim / norm ** 3
-            ) 
+            # this is actually not their grads, but we will calculate them later
             return Matrix(
-                y_data, (x, ), (local_grad, ), ops='rmsnorm'
+                y_data, (x, ), (y_data, norm), ops='rmsnorm'
             )
         else:
             return Matrix(y_data, (x, ))
 
+class RMSNorm2():
+     def __call__(self, x: Matrix) -> Matrix:
+        batch, dim = x.data.shape
+        epsilon = 1e-7
+        norm = ((Sum()(x**2) )/ dim + epsilon) ** 0.5 # (b, 1)
+        norm = norm.repeat(dim, -1)  # (b, dim)
+        result = x / norm # (b/dim)
+
+        return result
+   
 if __name__ == '__main__':
     # this is just a test
     pass
