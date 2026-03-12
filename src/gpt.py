@@ -73,6 +73,13 @@ class Matrix():
                 ) 
             elif v.ops == 'repeat':
                 v.children[0].grad += np.sum(v.grad, axis=-1, keepdims=True)
+            elif v.ops == 'softmax':
+                # dL/dy.dot (s)
+                term_1 = v.grad*v.children[0].data
+                term_2 = np.sum(
+                    term_1, axis=-1, keepdims=True
+                ) * v.children[0].data
+                v.children[0].grad += term 1 - term 2
             else:
                 for child, local_grad in zip(v.children, v.local_grads):
                     child.grad += v.grad * local_grad
@@ -87,6 +94,7 @@ class Sum:
             local_grads=(np.ones(x.data.shape),),
             ops='sum'
         )
+
 class Linear():
     """ Simiar to tensorflow's Dense """
     def __init__(self, d_in, d_out):
@@ -102,9 +110,31 @@ class Linear():
 class Relu():
     """ Relu activate"""
     def __call__(self, x: Matrix):
+        return Matrix(x.data * (x.data > 0), (x, ), ((x.data > 0) * 1.0, ))
+
+class Softmax():
+    # TODO: test this softmax
+    """
+    y (B, D) = softmax(x) (B, d)
+
+    dL/dY has has (B, d)
+
+    dL/dx_i = sum_j (dL/dy_j dy_j/d x_i)
+    dL/dx_i = sum_j dL/dy_j Sj(delta - S_i)
+                = v.grad * s - v.grad*s_i.sum,
+    """
+    def __call__(self, x: Matrix) -> Matrix:
+        max_val = np.max(y_pred.data, axis=-1, keepdims=True)
+        data = y_pred.data- max_val
+        data = np.exp(data)
+        data = data / np.sum(data, axis=-1, keepdims=True)
         return Matrix(
-            x.data * (x.data > 0), (x, ), ((x.data > 0) * 1.0, )
+            data=data,
+            children=(x, ),
+            ops='softmax'
         )
+
+   
 
 
 class Dropout: 
@@ -132,6 +162,7 @@ class CategoricalEntropy():
     def __call__(self, y_true, y_pred, training=True):
         softmax_output = self.softmax(y_pred) 
         batch_size = softmax_output.shape[0] 
+        # TODO: remove this softmax
         return Matrix(
             - np.mean((y_true.data) * np.log(softmax_output + 1e-9)), 
             (y_pred, ), 
@@ -144,21 +175,6 @@ class CategoricalEntropy():
         data = data / np.sum(data, axis=-1, keepdims=True)
         return data
    
-
-class RMSNorm():
-    def __call__(self, x: Matrix, training=True):
-    
-        batch, dim = x.data.shape
-        epsilon = 1e-7
-        norm = np.sqrt(np.mean(x.data **2, axis=-1, keepdims=True) + epsilon)# (B, 1) 
-        y_data = x.data/norm
-        if training:
-            # this is actually not their grads, but we will calculate them later
-            return Matrix(
-                y_data, (x, ), (y_data, norm), ops='rmsnorm'
-            )
-        else:
-            return Matrix(y_data, (x, ))
 
 class RMSNorm2():
      def __call__(self, x: Matrix) -> Matrix:
