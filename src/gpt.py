@@ -34,6 +34,11 @@ class Matrix():
     def __rmul__(self, other): return self * other
     def __truediv__(self, other): return self * other ** (-1)
     def __rtruediv__(self, other): return other * self ** (-1)
+
+    def log(self):
+        return Matrix(
+            np.log(self.data + 1e-9), (self, ), (1/self.data, )
+        )
     def repeat(self, n, dim): 
         result = np.repeat(self.data, n, dim)
         return Matrix(
@@ -75,11 +80,9 @@ class Matrix():
                 v.children[0].grad += np.sum(v.grad, axis=-1, keepdims=True)
             elif v.ops == 'softmax':
                 # dL/dy.dot (s)
-                term_1 = v.grad*v.children[0].data
-                term_2 = np.sum(
-                    term_1, axis=-1, keepdims=True
-                ) * v.children[0].data
-                v.children[0].grad += term 1 - term 2
+                term_1 = v.grad*v.data
+                term_2 = np.sum(v.grad * v.data, axis=-1, keepdims=True) * v.data
+                v.children[0].grad += term_1 - term_2
             else:
                 for child, local_grad in zip(v.children, v.local_grads):
                     child.grad += v.grad * local_grad
@@ -124,8 +127,8 @@ class Softmax():
                 = v.grad * s - v.grad*s_i.sum,
     """
     def __call__(self, x: Matrix) -> Matrix:
-        max_val = np.max(y_pred.data, axis=-1, keepdims=True)
-        data = y_pred.data- max_val
+        max_val = np.max(x.data, axis=-1, keepdims=True)
+        data = x.data- max_val
         data = np.exp(data)
         data = data / np.sum(data, axis=-1, keepdims=True)
         return Matrix(
@@ -157,24 +160,16 @@ class Dropout:
 
 class CategoricalEntropy():
     def __init__(self):
-        pass
-
+        self.sum = Sum()
     def __call__(self, y_true, y_pred, training=True):
-        softmax_output = self.softmax(y_pred) 
-        batch_size = softmax_output.shape[0] 
-        # TODO: remove this softmax
-        return Matrix(
-            - np.mean((y_true.data) * np.log(softmax_output + 1e-9)), 
-            (y_pred, ), 
-            ((softmax_output - y_true.data)/batch_size, )
-        )
-    def softmax(self, y_pred: Matrix):
-        max_val = np.max(y_pred.data, axis=-1, keepdims=True)
-        data = y_pred.data- max_val
-        data = np.exp(data)
-        data = data / np.sum(data, axis=-1, keepdims=True)
-        return data
-   
+        """
+        Assuming that y_pred is already normalized by softmax and y_true is
+        1-hot encoded
+        """
+
+        batch = y_true.data.shape[0]
+        result = - self.sum(y_true * y_pred.log()) / batch
+        return result
 
 class RMSNorm2():
      def __call__(self, x: Matrix) -> Matrix:
