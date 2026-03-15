@@ -4,6 +4,7 @@ TODO: write more test to make sure the gradients are correct
 """
 import numpy as np
 import matplotlib.pyplot as plt
+from typing import List
 
 class Matrix():
     """ must always have attr .data, .grad, .forward(), .backward(), children"""
@@ -25,10 +26,15 @@ class Matrix():
     def __mul__(self, other):
         if not isinstance(other, Matrix):
             other = Matrix(np.zeros(self.data.shape) + other)
-        return Matrix( self.data* other.data, (self, other), (other.data, self.data ))
+        return Matrix(
+            self.data* other.data, (self, other), (other.data, self.data )
+        )
     def __neg__(self): return self * (-1)
 
-    def __pow__(self, other): return Matrix(self.data ** other, (self, ), (other * self.data ** (other - 1),))
+    def __pow__(self, other):
+        return Matrix(
+            self.data ** other, (self, ), (other * self.data ** (other - 1),)
+        )
     def __radd__(self, other): return self + other
     def __rsub__(self, other): return self + (-other)
     def __rmul__(self, other): return self * other
@@ -101,62 +107,29 @@ class Sum:
 class Linear():
     """ Simiar to tensorflow's Dense """
     def __init__(self, d_in, d_out):
-        self.w = Matrix(np.random.normal(0, np.sqrt(2.0 / d_in), (d_in, d_out)))
+        self.w = Matrix(
+            np.random.normal(0, np.sqrt(2.0 / d_in), (d_in, d_out))
+        )
     def __call__(self, other: Matrix) -> Matrix:
         return Matrix(
-            other.data.dot(self.w.data),
+            np.matmul(other.data, self.w.data),
             (self.w,  other), (other.data, self.w.data),
             ops="matmul"
         )
 
 
 class Relu():
-    """ Relu activate"""
+    """ Relu layer """
     def __call__(self, x: Matrix):
         return Matrix(x.data * (x.data > 0), (x, ), ((x.data > 0) * 1.0, ))
 
 class Softmax():
-    # TODO: test this softmax
-    """
-    y (B, D) = softmax(x) (B, d)
-
-    dL/dY has has (B, d)
-
-    dL/dx_i = sum_j (dL/dy_j dy_j/d x_i)
-    dL/dx_i = sum_j dL/dy_j Sj(delta - S_i)
-                = v.grad * s - v.grad*s_i.sum,
-    """
     def __call__(self, x: Matrix) -> Matrix:
         max_val = np.max(x.data, axis=-1, keepdims=True)
         data = x.data- max_val
         data = np.exp(data)
         data = data / np.sum(data, axis=-1, keepdims=True)
-        return Matrix(
-            data=data,
-            children=(x, ),
-            ops='softmax'
-        )
-
-   
-
-
-class Dropout: 
-    """ Dropout layer """
-    def __init__(self, ratio=0.5):
-        self.ratio = ratio
-
-    def __call__(self, x: Matrix, training=False):
-        if training:
-            # mask of dropped out element
-            mask = (np.random.rand(x.shape) < self.ratio)*1.0
-            data = x.data.copy()
-            data[mask] = 0
-            return Matrix(
-                data, (x, ), (1.0 - mask, )
-            )
-        else:
-            return x
-
+        return Matrix(data=data, children=(x, ), ops='softmax')
 
 class CategoricalEntropy():
     def __init__(self):
@@ -166,12 +139,11 @@ class CategoricalEntropy():
         Assuming that y_pred is already normalized by softmax and y_true is
         1-hot encoded
         """
-
         batch = y_true.data.shape[0]
         result = - self.sum(y_true * y_pred.log()) / batch
         return result
 
-class RMSNorm2():
+class RMSNorm():
      def __call__(self, x: Matrix) -> Matrix:
         batch, dim = x.data.shape
         epsilon = 1e-7
@@ -181,6 +153,62 @@ class RMSNorm2():
 
         return result
    
+
+class GPT:
+    """
+    GPT2 implementation
+    """
+    def __init__(self, vocab_size):
+        # Initialize the parameters, to store the knowledge of the model
+        self.n_layer = 12     # depth of the transformer neural network (number of layers)
+        self.n_embd = 16     # width of the network (embedding dimension)
+        self.block_size = 16 # maximum context length of the attention window (note: the longest name is 15 characters)
+        self.n_head = 4      # number of attention heads
+        self.vocab_size = vocab_size
+        self.head_dim = self.n_embd // self.n_head # derived dimension of each head
+        self.state_dict = {
+            'wte': Linear(self.vocab_size, self.n_embd),
+            'wpe': Linear(self.block_size, self.n_embd),
+            'lm_head': Linear(self.vocab_size, self.n_embd)
+        }
+        for i in range(self.n_layer):
+            n_embd = self.n_embd
+            self.state_dict[f'layer{i}.attn_wq'] = Linear(n_embd, n_embd)
+            self.state_dict[f'layer{i}.attn_wk'] = Linear(n_embd, n_embd)
+            self.state_dict[f'layer{i}.attn_wv'] = Linear(n_embd, n_embd)
+            self.state_dict[f'layer{i}.attn_wo'] = Linear(n_embd, n_embd)
+            self.state_dict[f'layer{i}.mlp_fc1'] = Linear(4 * n_embd, n_embd)
+            self.state_dict[f'layer{i}.mlp_fc2'] = Linear(n_embd, 4 * n_embd)
+
+        shapes = [layer.w.data.shape for name, layer in self.state_dict.items()]
+
+        self.norm = RMSNorm()
+        print("Number of parameters: ", sum([a * b for a, b in shapes]))
+
+    def __call__(self, x: List[int]):
+        """
+        calls to GPT where x is list of token ID
+        x: (B, L, D)
+        """
+        state_dict = seflt.state_dict
+        tok_emb = state_dict['wte'](x) # B, L, n_embd
+        pos_emb = state_dict['wpe'](x) # B, L, n_embd
+
+        x = self.norm(tok_emb + pos_emb)
+
+        for i in range(self.n_layer):
+            x_residual = x
+            q = state_dict[f'layer{li}.attn_wq'](x)
+            k = state_dict[f'layer{li}.attn_wk'](x)
+            v = state_dict[f'layer{li}.attn_wv'](x)
+            
+            """
+            q: (B, L, D) -> (B, L, N, H) -> (B , N, L, H)
+            attention weights (q @ K.T) = (B, N, L, L)
+            attention output = attention weights @ values 
+                             = (B, N, L, L ) @ (B, N, L, H) = (B, N, L, H)
+                             = transpose to (B, L, N, H) , reshape to (B, L, D)
+            """
 if __name__ == '__main__':
     # this is just a test
-    pass
+    gpt = GPT(vocab_size=26)

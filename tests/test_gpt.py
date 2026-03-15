@@ -135,7 +135,7 @@ def test_2():
 
 def test_3():
     """
-    Create an input, run through models with RMSNorm2
+    Create an input, run through models with RMSNorm
     """
     class MyModel:
 
@@ -144,7 +144,7 @@ def test_3():
             self.linear1 = Linear(5, 10)
             self.linear2 = Linear(10, 12)
             self.linear3 = Linear(12, 4)
-            self.norm = RMSNorm2()
+            self.norm = RMSNorm()
 
         def __call__(self, input_):
 
@@ -323,7 +323,7 @@ def test_mnist():
     class MyModel():
         def __init__(self):
             self.linear_1 = Linear(784, 128)
-            self.norm = RMSNorm2()
+            self.norm = RMSNorm()
             self.linear_2 = Linear(128, 64)
             self.linear_3 = Linear(64 , 32)
             self.linear_4 = Linear(32, 10)
