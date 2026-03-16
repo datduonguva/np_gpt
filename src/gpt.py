@@ -212,7 +212,7 @@ class GPT:
         self.state_dict = {
             'wte': Linear(self.vocab_size, self.n_embd),
             'wpe': Linear(self.block_size, self.n_embd),
-            'lm_head': Linear(self.vocab_size, self.n_embd)
+            'lm_head': Linear(self.n_embd, self.vocab_size,)
         }
         for i in range(self.n_layer):
             n_embd = self.n_embd
@@ -220,8 +220,8 @@ class GPT:
             self.state_dict[f'layer{i}.attn_wk'] = Linear(n_embd, n_embd)
             self.state_dict[f'layer{i}.attn_wv'] = Linear(n_embd, n_embd)
             self.state_dict[f'layer{i}.attn_wo'] = Linear(n_embd, n_embd)
-            self.state_dict[f'layer{i}.mlp_fc1'] = Linear(4 * n_embd, n_embd)
-            self.state_dict[f'layer{i}.mlp_fc2'] = Linear(n_embd, 4 * n_embd)
+            self.state_dict[f'layer{i}.mlp_fc1'] = Linear(n_embd, n_embd * 4)
+            self.state_dict[f'layer{i}.mlp_fc2'] = Linear(4 * n_embd, n_embd)
 
         shapes = [layer.w.data.shape for name, layer in self.state_dict.items()]
 
@@ -266,8 +266,18 @@ class GPT:
             ).reshape((0, 2, 3, 1)) # (B, N, H, L) 
             v = v.reshape(
                 (batch, ctx_len, self.n_head,  self.head_dim)
-            ).reshape((0, 2, 1, 3))
+            ).reshape((0, 2, 1, 3)) # (B, N, L, H)
 
+            x = (q.matmul(k)/ head_dim ** 0.5).matmul(v)
+            x = x.transpose((0, 2, 1, 3)).reshape((batch, ctx_len, -1))
+            x = x + x_residual
 
+            x_residual = x
+            x = self.norm(x)
+            x = state_dict[f'layer{li}.mlp_fc1'](x).relu()
+            x = state_dict[f'layer{li}.mlp_fc2'](x).relu()
+            x = x + x_residual
+            
+    logits = state_dict['lm_head'](x)
 if __name__ == '__main__':
     gpt = GPT(vocab_size=26)
