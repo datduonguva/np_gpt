@@ -4,7 +4,7 @@ TODO: write more test to make sure the gradients are correct
 """
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import List
+from typing import List, Tuple
 
 class Matrix():
     """ must always have attr .data, .grad, .forward(), .backward(), children"""
@@ -41,6 +41,22 @@ class Matrix():
     def __truediv__(self, other): return self * other ** (-1)
     def __rtruediv__(self, other): return other * self ** (-1)
 
+    def reshape(self, dims: Tuple[int]):
+        """ Reshape everything """
+        return Matrix(
+            data=self.data.reshape(dims),
+            children=(self,),
+            ops='reshape' # not doing any chain rules
+        )
+    def transpose(self, dims: Tuple[int]):
+        new_dims = [_[0] for _ in sorted(enumerate(dims), key=lambda x: x[1])]
+        return Matrix(
+            data=np.transpose(self.data, dims),
+
+            children=(self,),
+            local_grads=(new_dims,), # not technically localgrad
+            ops='transpose'
+        )
     def log(self):
         return Matrix(
             np.log(self.data + 1e-9), (self, ), (1/self.data, )
@@ -54,6 +70,14 @@ class Matrix():
     def relu(self):
         return Matrix(
             self.data * (self.data > 0), (self, ), ((self.data > 0) * 1.0, )
+        )
+
+    def matmul(self, other):
+        return Matrix(
+            np.matmul(self.data, other.data),
+            (self, other),
+            (self.other.data, self.data),
+            ops='matmul'
         )
 
     def backward(self):
@@ -73,9 +97,23 @@ class Matrix():
 
         self.grad = np.ones(self.data.shape)
         for v in reversed(topo):
-            if v.ops == 'matmul':
-                v.children[0].grad += v.local_grads[0].T.dot(v.grad)
+            if v.ops == 'linear':
+                d_in = v.local_grads[0].shape[-1]
+                d_out = v.grad.shape[-1]
+                v.children[0].grad += (
+                    v.local_grads[0].reshape((-1, d_in)).T.dot(
+                        v.grad.reshape((-1, d_out))
+                    )
+                )
                 v.children[1].grad += v.grad.dot(v.local_grads[1].T)
+            elif v.ops == 'matmul':
+                v.children[0].grad += np.matmul(
+                    v.grad, np.swapaxis(v.local_grads[0].data, -2, -1)
+                )
+                v.children[1].grad += np.matmul(
+                    np.swapaxis(v.local_grads[1].data, -2, -1),
+                    v.grad
+                )
             elif v.ops == 'rmsnorm':
                 # dL/dX = sum dL/dY dY/dX = dL/dY 1/norm (delta_id - X_i * X_j/norm **2/Dim)
                 y_data, norm = v.local_grads
@@ -89,6 +127,11 @@ class Matrix():
                 term_1 = v.grad*v.data
                 term_2 = np.sum(v.grad * v.data, axis=-1, keepdims=True) * v.data
                 v.children[0].grad += term_1 - term_2
+            elif v.ops == 'reshape':
+                v.children[0].grad += v.grad.reshape(v.children[0].grad.shape)
+            elif v.ops == 'transpose':
+                new_dims = v.local_grads[0]
+                v.children[0].grad += np.transpose(v.grad, new_dims)
             else:
                 for child, local_grad in zip(v.children, v.local_grads):
                     child.grad += v.grad * local_grad
@@ -114,7 +157,7 @@ class Linear():
         return Matrix(
             np.matmul(other.data, self.w.data),
             (self.w,  other), (other.data, self.w.data),
-            ops="matmul"
+            ops="linear"
         )
 
 
@@ -185,12 +228,17 @@ class GPT:
         self.norm = RMSNorm()
         print("Number of parameters: ", sum([a * b for a, b in shapes]))
 
-    def __call__(self, x: List[int]):
+    def __call__(self, x: List[List[int]]):
         """
         calls to GPT where x is list of token ID
-        x: (B, L, D)
+        x: (B, L, D) 
         """
+        
+        # does one hot encoded for token and positions
+
         state_dict = seflt.state_dict
+        batch, ctx_len = x.shape
+
         tok_emb = state_dict['wte'](x) # B, L, n_embd
         pos_emb = state_dict['wpe'](x) # B, L, n_embd
 
@@ -198,7 +246,7 @@ class GPT:
 
         for i in range(self.n_layer):
             x_residual = x
-            q = state_dict[f'layer{li}.attn_wq'](x)
+            q = state_dict[f'layer{li}.attn_wq'](x) # (B, L, D)
             k = state_dict[f'layer{li}.attn_wk'](x)
             v = state_dict[f'layer{li}.attn_wv'](x)
             
@@ -209,6 +257,17 @@ class GPT:
                              = (B, N, L, L ) @ (B, N, L, H) = (B, N, L, H)
                              = transpose to (B, L, N, H) , reshape to (B, L, D)
             """
+
+            q = q.reshape(
+                (batch, ctx_len, self.n_head,  self.head_dim)
+            ).reshape((0, 2, 1, 3)) # (B, N, L, H)
+            k = k.reshape(
+                (batch, ctx_len, self.n_head,  self.head_dim)
+            ).reshape((0, 2, 3, 1)) # (B, N, H, L) 
+            v = v.reshape(
+                (batch, ctx_len, self.n_head,  self.head_dim)
+            ).reshape((0, 2, 1, 3))
+
+
 if __name__ == '__main__':
-    # this is just a test
     gpt = GPT(vocab_size=26)
