@@ -315,6 +315,195 @@ def test_5():
         assert np.abs(grad_method_1 - grad_method_2).max() < max_error
 
 
+def test_reshape():
+    """
+    Test softmax layer
+    """
+    class MyModel:
+
+        def __init__(self):
+
+            self.linear1 = Linear(5, 12)
+            self.linear2 = Linear(6, 4)
+            self.softmax = Softmax()
+
+        def __call__(self, input_):
+
+            y1 = self.linear1(input_) # B, 12
+            y1 = self.softmax(y1)     # B, 12
+            y2 = y1.reshape((-1, 2, 6))
+            y2 = self.linear2(y2)       # B, 2, 4 
+            y2 = y2.reshape((-1, 8))    # B, 8
+            y2 = self.softmax(y2)
+            return y2
+
+    input_ = Matrix(data=np.random.normal(0, 1, (3, 5)))
+
+    my_model = MyModel()
+    output_ = my_model(input_)
+
+
+    output_.backward()
+
+    EPS = 1e-6
+    # shallower layers might produce more error compared to deeper layers
+    for layer, max_error in [
+        (my_model.linear1, 1e-3),
+        (my_model.linear2, 1e-3),
+    ]:
+        grad_method_1 = layer.w.grad
+
+        # method 2:
+        grad_method_2 = np.zeros(layer.w.data.shape)
+
+        original_w = layer.w.data.copy()
+        for i in range(grad_method_2.shape[0]):
+            for j in range(grad_method_2.shape[1]):
+
+                layer.w.data = original_w.copy()
+                layer.w.data[i][j] -= EPS
+
+                y1 = my_model(input_)
+
+                
+                layer.w.data = original_w.copy()
+                layer.w.data[i][j] += EPS
+
+                y2 = my_model(input_)
+
+                grad_method_2[i][j] = (y2 - y1).data.sum() / (2*EPS)
+
+        assert np.abs(grad_method_1 - grad_method_2).max() < max_error
+
+
+def test_transpose():
+    """
+    Test softmax layer
+    """
+    class MyModel:
+
+        def __init__(self):
+
+            self.linear1 = Linear(5, 12)
+            self.linear2 = Linear(6, 4)
+            self.linear3 = Linear(2, 4)
+            self.softmax = Softmax()
+
+        def __call__(self, input_):
+
+            y1 = self.linear1(input_) # B, 12
+            y1 = self.softmax(y1)     # B, 12
+            y2 = y1.reshape((-1, 2, 6))
+            y2 = self.linear2(y2)       # B, 2, 4 
+            y2 = y2.transpose((0, 2, 1))  # B, 4, 2
+            
+            y3 = self.linear3(y2) # B, 4, 4
+            y3 = y3.reshape((-1, 16))    # B, 8
+            y3 = self.softmax(y2)
+            return y3
+
+    input_ = Matrix(data=np.random.normal(0, 1, (3, 5)))
+
+    my_model = MyModel()
+    output_ = my_model(input_)
+
+
+    output_.backward()
+
+    EPS = 1e-6
+    # shallower layers might produce more error compared to deeper layers
+    for layer, max_error in [
+        (my_model.linear1, 1e-4),
+        (my_model.linear2, 1e-4),
+        (my_model.linear3, 1e-4),
+    ]:
+        grad_method_1 = layer.w.grad
+
+        # method 2:
+        grad_method_2 = np.zeros(layer.w.data.shape)
+
+        original_w = layer.w.data.copy()
+        for i in range(grad_method_2.shape[0]):
+            for j in range(grad_method_2.shape[1]):
+
+                layer.w.data = original_w.copy()
+                layer.w.data[i][j] -= EPS
+
+                y1 = my_model(input_)
+
+                
+                layer.w.data = original_w.copy()
+                layer.w.data[i][j] += EPS
+
+                y2 = my_model(input_)
+
+                grad_method_2[i][j] = (y2 - y1).data.sum() / (2*EPS)
+
+        assert np.abs(grad_method_1 - grad_method_2).max() < max_error
+
+def test_matmul():
+    """
+    Test softmax layer
+    """
+    class MyModel:
+
+        def __init__(self):
+
+            self.linear1 = Linear(5, 12)
+            self.linear2 = Linear(5, 24)
+            self.softmax = Softmax()
+
+        def __call__(self, input_):
+
+            y1 = self.linear1(input_) # B, 12
+            y2 = y1.reshape((-1, 4, 3)) # B, 4, 3
+
+            y3 = self.linear2(input_) # (B, 24)
+            y3 = y3.reshape((-1, 8, 3)) # (B, 8, 3)
+            y3 = y3.transpose((0, 2, 1)) # (B, 3, 8)
+            
+            y4 = y2.matmul(y3) #  B, 4, 8)
+            y4 = y4.reshape((-1, 32))
+            return y4
+
+    input_ = Matrix(data=np.random.normal(0, 1, (3, 5)))
+
+    my_model = MyModel()
+    output_ = my_model(input_)
+
+
+    output_.backward()
+
+    EPS = 1e-6
+    # shallower layers might produce more error compared to deeper layers
+    for layer, max_error in [
+        (my_model.linear1, 1e-4),
+        (my_model.linear2, 1e-4),
+    ]:
+        grad_method_1 = layer.w.grad
+
+        # method 2:
+        grad_method_2 = np.zeros(layer.w.data.shape)
+
+        original_w = layer.w.data.copy()
+        for i in range(grad_method_2.shape[0]):
+            for j in range(grad_method_2.shape[1]):
+
+                layer.w.data = original_w.copy()
+                layer.w.data[i][j] -= EPS
+
+                y1 = my_model(input_)
+
+                
+                layer.w.data = original_w.copy()
+                layer.w.data[i][j] += EPS
+
+                y2 = my_model(input_)
+
+                grad_method_2[i][j] = (y2 - y1).data.sum() / (2*EPS)
+
+ 
+
 def test_mnist():
     """
     This test trains an DNN model on MNIST to confirm that the loss converges.

@@ -76,7 +76,7 @@ class Matrix():
         return Matrix(
             np.matmul(self.data, other.data),
             (self, other),
-            (self.other.data, self.data),
+            (other.data, self.data),
             ops='matmul'
         )
 
@@ -108,10 +108,10 @@ class Matrix():
                 v.children[1].grad += v.grad.dot(v.local_grads[1].T)
             elif v.ops == 'matmul':
                 v.children[0].grad += np.matmul(
-                    v.grad, np.swapaxis(v.local_grads[0].data, -2, -1)
+                    v.grad, np.swapaxes(v.local_grads[0].data, -2, -1)
                 )
                 v.children[1].grad += np.matmul(
-                    np.swapaxis(v.local_grads[1].data, -2, -1),
+                    np.swapaxes(v.local_grads[1].data, -2, -1),
                     v.grad
                 )
             elif v.ops == 'rmsnorm':
