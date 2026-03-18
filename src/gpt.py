@@ -1,6 +1,5 @@
 """
-Implementation of DNN using numpy only with autograd
-TODO: write more test to make sure the gradients are correct
+Implementation of GPT2 using only Numpy
 """
 import numpy as np
 import matplotlib.pyplot as plt
@@ -208,7 +207,7 @@ class GPT:
     """
     def __init__(self, vocab_size, max_length=32):
         # Initialize the parameters, to store the knowledge of the model
-        self.n_layer = 4     # depth of the transformer neural network (number of layers)
+        self.n_layer = 1     # depth of the transformer neural network (number of layers)
         self.n_embd = 32     # width of the network (embedding dimension)
         self.block_size = max_length # maximum context length 
         self.n_head = 4      # number of attention heads
@@ -332,10 +331,9 @@ if __name__ == '__main__':
     with open("data/names.txt", "r") as f:
         docs = [line.strip() for line in f.readlines()]
         np.random.shuffle(docs)
-    id2char = sorted(set(''.join(docs)))
-    char2id= {ch: id_ for id_, ch in enumerate(id2char)} # unique characters in the dataset become token ids 0..n-1
+    id2char = sorted(set(''.join(docs))) # 26
     BOS = len(id2char) # token id for a special Beginning of Sequence (BOS) token
-    id2char.append("*")
+    char2id= {ch: id_ for id_, ch in enumerate(id2char)} # unique characters in the dataset become token ids 0..n-1
     vocab_size = len(id2char) + 1 # total number of unique tokens, +1 is for BOS
     print(f"vocab size: {vocab_size}")
 
@@ -345,7 +343,7 @@ if __name__ == '__main__':
 
     # train for 1000 steps
     losses = []
-    for step in range(8000):
+    for step in range(10000):
         mini_batch = [
             docs[np.random.randint(len(docs))] for _ in range(batch_size)
         ]
@@ -364,6 +362,7 @@ if __name__ == '__main__':
         logits, loss = gpt(x=token_ids, y=target_ids)
 
         loss.backward()
+        losses.append(loss.data.mean())
 
         # sgd
         lr = 1e-3
@@ -372,10 +371,19 @@ if __name__ == '__main__':
             layer.w.grad *= 0
         
         if step % 100 == 0:
-            print(f"step: {step}, loss: {loss.data.mean()}")
+            print(f"step: {step}, loss: {np.mean(losses[-100:])}")
             losses.append(loss.data.mean())
 
-
+    smooth_losses = [
+        np.mean
+    ]
+    plt.title("Loss vs step")
+    plt.plot(
+        list(range(100, len(losses))),
+        [np.mean(losses[i - 100:i]) for i in range(100, len(losses))],
+    )
+    plt.savefig('losses.png')
+    
     with open('model.pk', "wb") as f:
         pickle.dump(gpt, f)
 
@@ -392,12 +400,10 @@ if __name__ == '__main__':
                 for doc in mini_batch
             ])
             logits = gpt(x=token_ids)
-            print(logits.data.shape)
-            for i in range(max_length):
-                print(''.join(
-                    id2char[np.argmax(logits.data[0, i])]
-                ))
-            next_char_id = np.argmax(logits.data[0, current_length])
+            next_char_id = np.random.choice(
+                list(range(gpt.vocab_size)),
+                p=gpt.softmax(logits).data[0, current_length]
+            )
             if next_char_id == BOS:
                 break
             else:
