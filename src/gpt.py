@@ -5,6 +5,7 @@ TODO: write more test to make sure the gradients are correct
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Tuple
+import pickle
 
 class Matrix():
     """ must always have attr .data, .grad, .forward(), .backward(), children"""
@@ -59,7 +60,7 @@ class Matrix():
         )
     def log(self):
         return Matrix(
-            np.log(self.data + 1e-9), (self, ), (1/self.data, )
+            np.log(self.data + 1e-9), (self, ), (1/(self.data), )
         )
     def repeat(self, n, dim): 
         result = np.repeat(self.data, n, dim)
@@ -182,15 +183,19 @@ class CategoricalEntropy():
         Assuming that y_pred is already normalized by softmax and y_true is
         1-hot encoded
         """
-        batch = y_true.data.shape[0]
-        result = - self.sum(y_true * y_pred.log()) / batch
+        dims = y_true.data.shape[:-1]
+        total_dim = 1
+        for dim in dims:
+            total_dim *= dim
+        result = - self.sum(y_true * y_pred.log()) / total_dim
+
         return result
 
 class RMSNorm():
      def __call__(self, x: Matrix) -> Matrix:
-        batch, dim = x.data.shape
+        dim = x.data.shape[-1]
         epsilon = 1e-7
-        norm = ((Sum()(x**2) )/ dim + epsilon) ** 0.5 # (b, 1)
+        norm = ((Sum()(x**2) )/ dim + epsilon) ** 0.5 # (b,..., 1)
         norm = norm.repeat(dim, -1)  # (b, dim)
         result = x / norm # (b/dim)
 
@@ -201,11 +206,11 @@ class GPT:
     """
     GPT2 implementation
     """
-    def __init__(self, vocab_size):
+    def __init__(self, vocab_size, max_length=32):
         # Initialize the parameters, to store the knowledge of the model
-        self.n_layer = 12     # depth of the transformer neural network (number of layers)
-        self.n_embd = 16     # width of the network (embedding dimension)
-        self.block_size = 16 # maximum context length of the attention window (note: the longest name is 15 characters)
+        self.n_layer = 4     # depth of the transformer neural network (number of layers)
+        self.n_embd = 32     # width of the network (embedding dimension)
+        self.block_size = max_length # maximum context length 
         self.n_head = 4      # number of attention heads
         self.vocab_size = vocab_size
         self.head_dim = self.n_embd // self.n_head # derived dimension of each head
@@ -226,39 +231,59 @@ class GPT:
         shapes = [layer.w.data.shape for name, layer in self.state_dict.items()]
 
         self.norm = RMSNorm()
+        self.softmax = Softmax()
         print("Number of parameters: ", sum([a * b for a, b in shapes]))
 
-    def __call__(self, x: List[List[int]], mask= None):
+        self.loss_func = CategoricalEntropy()
+
+    def __call__(
+        self, x: List[List[int]], y: List[List[int]] = None, mask= None
+    ):
         """
         calls to GPT where x is list of token ID
         x: (B, L) 
+        y: (B, L) 
+        if y is not None, return Softmax loss. Else, return only the output
         """
         
         # does one hot encoded for token and positions
-        batch, length = x.shape
-        encoded_token = np.zeros((batch, length, self.vocab_size))
+        batch,  ctx_len = x.shape
+        mask = (1 - np.tril(np.ones((ctx_len, ctx_len))))
+        mask = mask[np.newaxis, np.newaxis, :, :]
+        mask = np.repeat(mask, batch, 0)
+        mask = np.repeat(mask, self.n_head, 1)
+        mask = Matrix(- mask * 1000)
+
+        encoded_tokens = np.zeros((batch, ctx_len, self.vocab_size))
+        if y is not None:
+            encoded_target = np.zeros((batch, ctx_len, self.vocab_size))
+
         # 1 hot encoded 
         for b in range(batch):
-            for l in range(length):
-                encoded_token[b][l][x[b][l]] = 1
-
-        encoded_position = np.zeros((batch, length, self.block_size))
+            for l in range(ctx_len):
+                encoded_tokens[b][l][x[b][l]] = 1
+                if y is not None:
+                    encoded_target[b][l][y[b][l]] = 1
+            
+        encoded_positions = np.zeros((batch, ctx_len, self.block_size))
         for b in range(batch):
-            for l in range(length) : 
-                encoded_postiion[b][l][x[b][l]] = 1
-
-
+            for l in range(ctx_len): 
+                encoded_positions[b][l][l] = 1
 
         
-        state_dict = seflt.state_dict
-        batch, ctx_len = x.shape
+        state_dict = self.state_dict
 
-        tok_emb = state_dict['wte'](x) # B, L, n_embd
-        pos_emb = state_dict['wpe'](x) # B, L, n_embd
+        encoded_tokens = Matrix(encoded_tokens)
+        encoded_positions = Matrix(encoded_positions)
+        if y is not None:
+            encoded_target = Matrix(encoded_target)
+
+        tok_emb = state_dict['wte'](encoded_tokens) # B, L, n_embd
+        pos_emb = state_dict['wpe'](encoded_positions) # B, L, n_embd
 
         x = self.norm(tok_emb + pos_emb)
 
-        for i in range(self.n_layer):
+        for li in range(self.n_layer):
             x_residual = x
             q = state_dict[f'layer{li}.attn_wq'](x) # (B, L, D)
             k = state_dict[f'layer{li}.attn_wk'](x)
@@ -274,18 +299,20 @@ class GPT:
 
             q = q.reshape(
                 (batch, ctx_len, self.n_head,  self.head_dim)
-            ).reshape((0, 2, 1, 3)) # (B, N, L, H)
+            ).transpose((0, 2, 1, 3)) # (B, N, L, H)
             k = k.reshape(
                 (batch, ctx_len, self.n_head,  self.head_dim)
-            ).reshape((0, 2, 3, 1)) # (B, N, H, L) 
+            ).transpose((0, 2, 3, 1)) # (B, N, H, L) 
             v = v.reshape(
                 (batch, ctx_len, self.n_head,  self.head_dim)
-            ).reshape((0, 2, 1, 3)) # (B, N, L, H)
+            ).transpose((0, 2, 1, 3)) # (B, N, L, H)
 
-            x = (q.matmul(k)/ head_dim ** 0.5).matmul(v)
-            x = x.transpose((0, 2, 1, 3)).reshape((batch, ctx_len, -1))
+            weights = (q.matmul(k)/ self.n_embd ** 0.5) # (B, N, L, L)
+
+            x = self.softmax(weights + mask).matmul(v)  # (B, N, L, H)
+            x = x.transpose((0, 2, 1, 3)).reshape((batch, ctx_len, -1)) # (B, L, D)
+            x = state_dict[f'layer{li}.attn_wo'](x) # (B, L, D)
             x = x + x_residual
-
             x_residual = x
             x = self.norm(x)
             x = state_dict[f'layer{li}.mlp_fc1'](x).relu()
@@ -294,7 +321,85 @@ class GPT:
             
         logits = state_dict['lm_head'](x)
 
-        return logits
+        if y is not None: 
+            logits = self.softmax(logits)
+            loss = self.loss_func(encoded_target, logits)
+            return logits, loss
+        else:
+            return logits
 
 if __name__ == '__main__':
-    gpt = GPT(vocab_size=26)
+    with open("data/names.txt", "r") as f:
+        docs = [line.strip() for line in f.readlines()]
+        np.random.shuffle(docs)
+    id2char = sorted(set(''.join(docs)))
+    char2id= {ch: id_ for id_, ch in enumerate(id2char)} # unique characters in the dataset become token ids 0..n-1
+    BOS = len(id2char) # token id for a special Beginning of Sequence (BOS) token
+    id2char.append("*")
+    vocab_size = len(id2char) + 1 # total number of unique tokens, +1 is for BOS
+    print(f"vocab size: {vocab_size}")
+
+    gpt = GPT(vocab_size=vocab_size, max_length=32)
+    batch_size = 8
+    max_length = 16
+
+    # train for 1000 steps
+    losses = []
+    for step in range(8000):
+        mini_batch = [
+            docs[np.random.randint(len(docs))] for _ in range(batch_size)
+        ]
+        # change to tokens
+        token_ids = np.array([
+            (
+                [BOS] + 
+                [char2id[ch] for ch in doc] + 
+                [BOS] *  max_length
+            )[:max_length]
+            for doc in mini_batch
+        ])
+        target_ids = token_ids.copy()
+        target_ids[:, :-1] = target_ids[:, 1:]
+        # forward calls:
+        logits, loss = gpt(x=token_ids, y=target_ids)
+
+        loss.backward()
+
+        # sgd
+        lr = 1e-3
+        for name, layer in gpt.state_dict.items():
+            layer.w.data -= lr * layer.w.grad
+            layer.w.grad *= 0
+        
+        if step % 100 == 0:
+            print(f"step: {step}, loss: {loss.data.mean()}")
+            losses.append(loss.data.mean())
+
+
+    with open('model.pk', "wb") as f:
+        pickle.dump(gpt, f)
+
+    while True:
+        name = input("name: ")
+        while True:
+            current_length = len(name)
+            mini_batch = [name]
+            # change to tokens
+            token_ids = np.array([
+                (
+                    [BOS] + [char2id[ch] for ch in doc] + [BOS] *  max_length
+                )[:max_length]
+                for doc in mini_batch
+            ])
+            logits = gpt(x=token_ids)
+            print(logits.data.shape)
+            for i in range(max_length):
+                print(''.join(
+                    id2char[np.argmax(logits.data[0, i])]
+                ))
+            next_char_id = np.argmax(logits.data[0, current_length])
+            if next_char_id == BOS:
+                break
+            else:
+                name = name + id2char[next_char_id]
+                print("name: ", name)
