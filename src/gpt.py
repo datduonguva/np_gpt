@@ -228,14 +228,28 @@ class GPT:
         self.norm = RMSNorm()
         print("Number of parameters: ", sum([a * b for a, b in shapes]))
 
-    def __call__(self, x: List[List[int]]):
+    def __call__(self, x: List[List[int]], mask= None):
         """
         calls to GPT where x is list of token ID
-        x: (B, L, D) 
+        x: (B, L) 
         """
         
         # does one hot encoded for token and positions
+        batch, length = x.shape
+        encoded_token = np.zeros((batch, length, self.vocab_size))
+        # 1 hot encoded 
+        for b in range(batch):
+            for l in range(length):
+                encoded_token[b][l][x[b][l]] = 1
 
+        encoded_position = np.zeros((batch, length, self.block_size))
+        for b in range(batch):
+            for l in range(length) : 
+                encoded_postiion[b][l][x[b][l]] = 1
+
+
+
+        
         state_dict = seflt.state_dict
         batch, ctx_len = x.shape
 
@@ -278,6 +292,9 @@ class GPT:
             x = state_dict[f'layer{li}.mlp_fc2'](x).relu()
             x = x + x_residual
             
-    logits = state_dict['lm_head'](x)
+        logits = state_dict['lm_head'](x)
+
+        return logits
+
 if __name__ == '__main__':
     gpt = GPT(vocab_size=26)
