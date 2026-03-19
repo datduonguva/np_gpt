@@ -59,7 +59,7 @@ class Matrix():
         )
     def log(self):
         return Matrix(
-            np.log(self.data + 1e-9), (self, ), (1/(self.data), )
+            np.log(self.data + 1e-15), (self, ), (1/(self.data), )
         )
     def repeat(self, n, dim): 
         result = np.repeat(self.data, n, dim)
@@ -187,13 +187,12 @@ class CategoricalEntropy():
         for dim in dims:
             total_dim *= dim
         result = - self.sum(y_true * y_pred.log()) / total_dim
-
         return result
 
 class RMSNorm():
      def __call__(self, x: Matrix) -> Matrix:
         dim = x.data.shape[-1]
-        epsilon = 1e-7
+        epsilon = 1e-15
         norm = ((Sum()(x**2) )/ dim + epsilon) ** 0.5 # (b,..., 1)
         norm = norm.repeat(dim, -1)  # (b, dim)
         result = x / norm # (b/dim)
@@ -207,8 +206,8 @@ class GPT:
     """
     def __init__(self, vocab_size, max_length=32):
         # Initialize the parameters, to store the knowledge of the model
-        self.n_layer = 1     # depth of the transformer neural network (number of layers)
-        self.n_embd = 32     # width of the network (embedding dimension)
+        self.n_layer = 4     # depth of the transformer neural network (number of layers)
+        self.n_embd = 16     # width of the network (embedding dimension)
         self.block_size = max_length # maximum context length 
         self.n_head = 4      # number of attention heads
         self.vocab_size = vocab_size
@@ -341,7 +340,7 @@ if __name__ == '__main__':
     batch_size = 8
     max_length = 16
 
-    # train for 1000 steps
+    # train for 10000 steps
     losses = []
     for step in range(10000):
         mini_batch = [
@@ -372,7 +371,7 @@ if __name__ == '__main__':
         
         if step % 100 == 0:
             print(f"step: {step}, loss: {np.mean(losses[-100:])}")
-            losses.append(loss.data.mean())
+            losses.append(loss.data.mean()*max_length)
 
     smooth_losses = [
         np.mean
@@ -389,7 +388,7 @@ if __name__ == '__main__':
 
     while True:
         name = input("name: ")
-        while True:
+        while len(name) < max_length:
             current_length = len(name)
             mini_batch = [name]
             # change to tokens
@@ -402,7 +401,7 @@ if __name__ == '__main__':
             logits = gpt(x=token_ids)
             next_char_id = np.random.choice(
                 list(range(gpt.vocab_size)),
-                p=gpt.softmax(logits).data[0, current_length]
+                p=gpt.softmax(logits/0.5).data[0, current_length]
             )
             if next_char_id == BOS:
                 break
